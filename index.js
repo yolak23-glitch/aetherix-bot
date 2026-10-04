@@ -187,4 +187,4 @@ client.on(Events.InteractionCreate, async (_0x5) => {
   } catch (_0x0) { return _0x5.editReply({ embeds: [makeEmbed({ heading: 'BAŞARISIZ', description: 'Yetki hatası veya sistem hatası.' })] }); }
 });
 
-client.login(_0x3e1a);
+client.login(MTU1NjM4MDE5Nzc5MDY3OTA2MA.GwupmC.RqnbVGKb8P4kKcVpZrekom48Icd9P6aDGlM5Uk);
