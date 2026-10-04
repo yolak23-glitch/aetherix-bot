@@ -579,3 +579,5 @@ if (!TOKEN) {
 }
 client.login(TOKEN);
     
+const http = require('http');
+http.createServer((req, res) => res.end('AETHERIX Core Online')).listen(process.env.PORT || 3000);
