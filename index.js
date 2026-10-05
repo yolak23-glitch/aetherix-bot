@@ -2,17 +2,6 @@
  * ═══════════════════════════════════════════════════════════════
  *  AETHERIX SYSTEM ENGINE  —  Discord.js v14 (önerilen: ^14.16)
  * ═══════════════════════════════════════════════════════════════
- *  KURULUM
- *   1) npm i discord.js
- *   2) Developer Portal > Bot > Privileged Gateway Intents:
- *        - SERVER MEMBERS INTENT   (açık olmalı)
- *        - MESSAGE CONTENT INTENT  (açık olmalı)
- *   3) Botu "bot" scope + "Administrator" yetkisiyle sunucuya ekleyin.
- *   4) Çalıştırma:  DISCORD_TOKEN=xxxxx node index.js
- *   5) Sunucuda bir yönetici olarak  !setup  yazın.
- *
- *  NOT: Botun kendi rolü, AETHERIX rollerinin ÜSTÜNDE olmalıdır.
- * ═══════════════════════════════════════════════════════════════
  */
 'use strict';
 
@@ -31,24 +20,21 @@ const {
 
 /* ─────────────────────────── YAPILANDIRMA ─────────────────────────── */
 
-const TOKEN = 'MTU1NjM4MDE5Nzc5MDY3OTA2MA.GwupmC.RqnbVGKb8P4kKcVpZrekom48Icd9P6aDGlM5Uk';
+// Discloud ortam değişkeninden veya doğrudan tanımlanan token'dan alır
+const TOKEN = process.env.TOKEN || process.env.DISCORD_TOKEN || 'MTU1NjM4MDE5Nzc5MDY3OTA2MA.GwupmC.RqnbVGKb8P4kKcVpZrekom48Icd9P6aDGlM5Uk';
 const PREFIX = '!';
 const VERIFY_BUTTON_ID = 'aetherix_verify_access';
 
 // true: !setup sırasında, AETHERIX yapısı dışındaki mevcut tüm kanallar UNVERIFIED'dan gizlenir.
 const HIDE_EXISTING_CHANNELS = true;
 
-// Kilitli (salt okunur) kanallarda yazma izni verilecek roller. Örn: ['DEVELOPER', 'OPERATIVE']
-// Varsayılan boş: Mesaj yazma yalnızca Administrator yetkisi olanlar (ARCHITECT) ve bot için açıktır.
+// Kilitli (salt okunur) kanallarda yazma izni verilecek roller.
 const LOCKED_WRITE_ROLES = [];
 
 const EMBED_COLOR = 0x23252b; // mat / koyu grafit
 const ENGINE_TITLE = 'AETHERIX SYSTEM ENGINE';
 
-/* ───────────────────────────── ROLLER ─────────────────────────────
- * Sıra önemlidir: Discord yeni rolü en alta eklediği için yukarıdan
- * aşağıya oluşturulduğunda hiyerarşi birebir bu sırada olur.
- */
+/* ───────────────────────────── ROLLER ───────────────────────────── */
 const ROLES = {
   ARCHITECT: {
     name: 'AETHERIX ARCHITECT',
@@ -99,14 +85,9 @@ const ROLES = {
   },
 };
 
-// "MEMBER ve üstü" roller
 const VERIFIED_KEYS = ['MEMBER', 'PARTNER', 'OPERATIVE', 'DEVELOPER', 'ARCHITECT'];
 
-/* ──────────────────────── KANAL YAPISI (!setup) ────────────────────────
- * mode: 'entry'    → yalnızca UNVERIFIED görür, yazamaz
- *       'readonly' → MEMBER+ görür, yazamaz
- *       'chat'     → MEMBER+ görür ve yazabilir
- */
+/* ──────────────────────── KANAL YAPISI (!setup) ──────────────────────── */
 const STRUCTURE = [
   {
     name: '🏛 // ENTRY-POINT',
@@ -183,7 +164,6 @@ const makeEmbed = ({ heading, description, fields = [], footer = 'AETHERIX // SE
 
 const findRole = (guild, key) => guild.roles.cache.find((r) => r.name === ROLES[key].name);
 
-/** Kanal tipine göre izin (permission overwrite) listesi üretir. */
 function buildOverwrites(guild, roles, mode) {
   const overwrites = [
     { id: guild.roles.everyone.id, deny: [P.ViewChannel] },
@@ -332,7 +312,6 @@ function buildPanel(spec) {
   return null;
 }
 
-/** Aynı paneli tekrar göndermemek için son mesajlara bakar. */
 async function postPanel(channel, spec, botId) {
   const payload = buildPanel(spec);
   if (!payload) return;
@@ -549,7 +528,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return reply('DOĞRULAMA MEVCUT', 'Hesabınız zaten doğrulanmıştır. Ek bir işlem gerekmemektedir.');
     }
 
-    // Önce yetki ver, sonra kısıtlı rolü kaldır (kullanıcı hiçbir anda rolsüz kalmaz)
     await member.roles.add(memberRole, 'AETHERIX SYSTEM ENGINE: doğrulama');
     if (member.roles.cache.has(unverifiedRole.id)) {
       await member.roles.remove(unverifiedRole, 'AETHERIX SYSTEM ENGINE: doğrulama');
@@ -574,9 +552,8 @@ client.on(Events.Error, (err) => console.error('[CLIENT] Hata:', err));
 process.on('unhandledRejection', (err) => console.error('[UNHANDLED]', err));
 
 if (!TOKEN) {
-  console.error('DISCORD_TOKEN ortam değişkeni tanımlı değil. Örn: DISCORD_TOKEN=xxxxx node index.js');
+  console.error('DISCORD_TOKEN / TOKEN ortam değişkeni veya kod içinde token bulunamadı.');
   process.exit(1);
 }
-client.login(TOKEN);
 
-  
+client.login(TOKEN);
