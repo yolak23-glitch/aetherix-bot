@@ -1,0 +1,23 @@
+[
+  {
+    "name": "AIX Secure Chat",
+    "version": "1.2.0",
+    "size": "18.4 MB",
+    "description": "Uçtan uca şifreli, hafif ve hızlı mesajlaşma uygulaması. Gizlilik odaklı tasarım ve koyu tema desteği sunar.",
+    "downloadUrl": "https://aixcompany.netlify.app/downloads/aix-secure-chat.apk"
+  },
+  {
+    "name": "AIX Toolkit",
+    "version": "0.9.5",
+    "size": "7.8 MB",
+    "description": "Günlük kullanım için pratik araçlar topluluğu: hesap makinesi, birim dönüştürücü ve not alma modülü.",
+    "downloadUrl": "https://aixcompany.netlify.app/downloads/aix-toolkit.apk"
+  },
+  {
+    "name": "Neon Runner",
+    "version": "2.0.1",
+    "size": "54.2 MB",
+    "description": "Cyberpunk atmosferinde hızlı tempolu koşu oyunu. Çevrimdışı oynanabilir.",
+    "downloadUrl": "https://aixcompany.netlify.app/downloads/neon-runner.apk"
+  }
+]
