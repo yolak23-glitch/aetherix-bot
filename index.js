@@ -2,8 +2,22 @@
  * ═══════════════════════════════════════════════════════════════
  *  AETHERIX SYSTEM ENGINE  —  Discord.js v14 (önerilen: ^14.16)
  * ═══════════════════════════════════════════════════════════════
+ *  KURULUM
+ *   1) npm i discord.js
+ *   2) Developer Portal > Bot > Privileged Gateway Intents:
+ *        - SERVER MEMBERS INTENT   (açık olmalı)
+ *        - MESSAGE CONTENT INTENT  (açık olmalı)
+ *   3) Botu "bot" scope + "Administrator" yetkisiyle sunucuya ekleyin.
+ *   4) Çalıştırma:  DISCORD_TOKEN=xxxxx node index.js
+ *   5) Sunucuda bir yönetici olarak  !setup  yazın.
+ *
+ *  NOT: Botun kendi rolü, AETHERIX rollerinin ÜSTÜNDE olmalıdır.
+ * ═══════════════════════════════════════════════════════════════
  */
 'use strict';
+
+const fs = require('fs');
+const path = require('path');
 
 const {
   Client,
@@ -20,21 +34,24 @@ const {
 
 /* ─────────────────────────── YAPILANDIRMA ─────────────────────────── */
 
-// Discloud ortam değişkeninden veya doğrudan tanımlanan token'dan alır
-const TOKEN = process.env.TOKEN || process.env.DISCORD_TOKEN || 'MTU1NjM4MDE5Nzc5MDY3OTA2MA.GwupmC.RqnbVGKb8P4kKcVpZrekom48Icd9P6aDGlM5Uk';
+const TOKEN = process.env.DISCORD_TOKEN;
 const PREFIX = '!';
 const VERIFY_BUTTON_ID = 'aetherix_verify_access';
 
 // true: !setup sırasında, AETHERIX yapısı dışındaki mevcut tüm kanallar UNVERIFIED'dan gizlenir.
 const HIDE_EXISTING_CHANNELS = true;
 
-// Kilitli (salt okunur) kanallarda yazma izni verilecek roller.
+// Kilitli (salt okunur) kanallarda yazma izni verilecek roller. Örn: ['DEVELOPER', 'OPERATIVE']
+// Varsayılan boş: Mesaj yazma yalnızca Administrator yetkisi olanlar (ARCHITECT) ve bot için açıktır.
 const LOCKED_WRITE_ROLES = [];
 
 const EMBED_COLOR = 0x23252b; // mat / koyu grafit
 const ENGINE_TITLE = 'AETHERIX SYSTEM ENGINE';
 
-/* ───────────────────────────── ROLLER ───────────────────────────── */
+/* ───────────────────────────── ROLLER ─────────────────────────────
+ * Sıra önemlidir: Discord yeni rolü en alta eklediği için yukarıdan
+ * aşağıya oluşturulduğunda hiyerarşi birebir bu sırada olur.
+ */
 const ROLES = {
   ARCHITECT: {
     name: 'AETHERIX ARCHITECT',
@@ -85,9 +102,14 @@ const ROLES = {
   },
 };
 
+// "MEMBER ve üstü" roller
 const VERIFIED_KEYS = ['MEMBER', 'PARTNER', 'OPERATIVE', 'DEVELOPER', 'ARCHITECT'];
 
-/* ──────────────────────── KANAL YAPISI (!setup) ──────────────────────── */
+/* ──────────────────────── KANAL YAPISI (!setup) ────────────────────────
+ * mode: 'entry'    → yalnızca UNVERIFIED görür, yazamaz
+ *       'readonly' → MEMBER+ görür, yazamaz
+ *       'chat'     → MEMBER+ görür ve yazabilir
+ */
 const STRUCTURE = [
   {
     name: '🏛 // ENTRY-POINT',
@@ -164,6 +186,7 @@ const makeEmbed = ({ heading, description, fields = [], footer = 'AETHERIX // SE
 
 const findRole = (guild, key) => guild.roles.cache.find((r) => r.name === ROLES[key].name);
 
+/** Kanal tipine göre izin (permission overwrite) listesi üretir. */
 function buildOverwrites(guild, roles, mode) {
   const overwrites = [
     { id: guild.roles.everyone.id, deny: [P.ViewChannel] },
@@ -312,6 +335,7 @@ function buildPanel(spec) {
   return null;
 }
 
+/** Aynı paneli tekrar göndermemek için son mesajlara bakar. */
 async function postPanel(channel, spec, botId) {
   const payload = buildPanel(spec);
   if (!payload) return;
@@ -458,6 +482,256 @@ async function runSetup(message) {
   }
 }
 
+/* ═══════════════════════════════════════════════════════════════════
+ *  EK MODÜLLER (v2)
+ *  Aşağıdaki bölümler mevcut doğrulama / kurulum sistemine DOKUNMADAN
+ *  eklenmiştir. Kendi dinleyicileriyle bağımsız çalışırlar.
+ * ═══════════════════════════════════════════════════════════════════ */
+
+/* ───────────────── MODÜL 1: GİRİŞ - ÇIKIŞ ───────────────── */
+
+const LOG_CATEGORY_NAME = '📢 GİRİŞ - ÇIKIŞ';
+const LOG_CHANNEL_NAME = 'giriş-çıkış';
+const JOIN_COLOR = 0x39ff14;  // neon yeşil
+const LEAVE_COLOR = 0xe03131; // kırmızı
+
+const logSetupInFlight = new Map();
+
+function findLogChannel(guild) {
+  return (
+    guild.channels.cache.find(
+      (c) =>
+        c.type === ChannelType.GuildText &&
+        c.name === LOG_CHANNEL_NAME &&
+        c.parent?.name === LOG_CATEGORY_NAME,
+    ) ?? null
+  );
+}
+
+/** Kategori / kanal yoksa oluşturur; varsa mevcut izinlere dokunmaz. */
+async function createLogChannelIfMissing(guild) {
+  await guild.channels.fetch();
+  const existing = findLogChannel(guild);
+  if (existing) return existing;
+
+  const me = await guild.members.fetchMe();
+  const overwrites = [
+    {
+      id: guild.roles.everyone.id,
+      allow: [P.ViewChannel, P.ReadMessageHistory],
+      deny: [P.SendMessages, P.SendMessagesInThreads, P.CreatePublicThreads, P.CreatePrivateThreads],
+    },
+    {
+      id: me.id,
+      allow: [P.ViewChannel, P.ReadMessageHistory, P.SendMessages, P.EmbedLinks],
+    },
+  ];
+
+  let category = guild.channels.cache.find(
+    (c) => c.type === ChannelType.GuildCategory && c.name === LOG_CATEGORY_NAME,
+  );
+  if (!category) {
+    category = await guild.channels.create({
+      name: LOG_CATEGORY_NAME,
+      type: ChannelType.GuildCategory,
+      permissionOverwrites: overwrites,
+      reason: 'AETHERIX SYSTEM ENGINE: giriş-çıkış kategorisi',
+    });
+  }
+
+  return guild.channels.create({
+    name: LOG_CHANNEL_NAME,
+    type: ChannelType.GuildText,
+    parent: category.id,
+    topic: 'Sunucuya katılan ve ayrılan üyelerin otomatik bildirim akışı.',
+    permissionOverwrites: overwrites,
+    reason: 'AETHERIX SYSTEM ENGINE: giriş-çıkış kanalı',
+  });
+}
+
+/** Aynı sunucuda eşzamanlı çift oluşturmayı engeller. */
+function ensureLogChannel(guild) {
+  if (!logSetupInFlight.has(guild.id)) {
+    const task = createLogChannelIfMissing(guild).finally(() => logSetupInFlight.delete(guild.id));
+    logSetupInFlight.set(guild.id, task);
+  }
+  return logSetupInFlight.get(guild.id);
+}
+
+async function sendToLogChannel(guild, payload) {
+  const channel = findLogChannel(guild) ?? (await ensureLogChannel(guild));
+  return channel.send(payload);
+}
+
+function buildJoinEmbed(member) {
+  const { user, guild } = member;
+  return new EmbedBuilder()
+    .setColor(JOIN_COLOR)
+    .setAuthor({ name: ENGINE_TITLE })
+    .setTitle('🟢 YENİ BAĞLANTI // ÜYE KATILDI')
+    .setDescription(`${user} topluluğa katıldı.\n**Etiket:** \`${user.tag}\``)
+    .setThumbnail(user.displayAvatarURL({ extension: 'png', size: 256 }))
+    .addFields(
+      { name: 'HESAP OLUŞTURMA', value: `<t:${Math.floor(user.createdTimestamp / 1000)}:R>`, inline: true },
+      { name: 'ÜYE SIRASI', value: `#${guild.memberCount}`, inline: true },
+    )
+    .setFooter({ text: `ID: ${user.id}` })
+    .setTimestamp();
+}
+
+function buildLeaveEmbed(member) {
+  const name = member.user?.tag ?? 'Bilinmeyen kullanıcı';
+  return new EmbedBuilder()
+    .setColor(LEAVE_COLOR)
+    .setDescription(`🔴 **${name}** sunucudan ayrıldı.`)
+    .setFooter({ text: `Kalan üye: ${member.guild.memberCount}` })
+    .setTimestamp();
+}
+
+/** Kanalı hazırlar ve ayrılma olaylarının yakalanması için üyeleri önbelleğe alır. */
+async function prepareGuild(guild) {
+  try {
+    await ensureLogChannel(guild);
+  } catch (err) {
+    console.error(`[GİRİŞ-ÇIKIŞ] Kanal hazırlanamadı (${guild.name}):`, err.message);
+  }
+  try {
+    await guild.members.fetch();
+  } catch (err) {
+    console.warn(`[GİRİŞ-ÇIKIŞ] Üye önbelleği alınamadı (${guild.name}):`, err.message);
+  }
+}
+
+/* ───────────────── MODÜL 2: APPS.JSON / !uygulamalar ───────────────── */
+
+const APPS_FILE = path.join(__dirname, 'apps.json');
+const WEBSITE_URL = 'https://aixcompany.netlify.app/';
+const APPS_COMMANDS = [`${PREFIX}uygulamalar`, `${PREFIX}apps`];
+const APPS_COOLDOWN_MS = 5000;
+const appsCooldown = new Map();
+
+const clip = (text, max) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
+
+/** Birden fazla anahtar adını destekler (name / ad, version / sürüm ...). */
+function pick(obj, keys) {
+  for (const key of keys) {
+    const value = obj?.[key];
+    if (value !== undefined && value !== null && String(value).trim() !== '') return String(value).trim();
+  }
+  return '';
+}
+
+function normalizeApp(raw) {
+  const url = pick(raw, ['downloadUrl', 'download', 'link', 'url', 'indirme']);
+  return {
+    name: pick(raw, ['name', 'ad', 'isim']),
+    version: pick(raw, ['version', 'surum', 'sürüm']),
+    size: pick(raw, ['size', 'boyut']),
+    description: pick(raw, ['description', 'aciklama', 'açıklama']),
+    url: /^https?:\/\//i.test(url) ? url : '',
+  };
+}
+
+/** apps.json okur. Hata durumunda exception fırlatır (çağıran try-catch ile yakalar). */
+function loadApps() {
+  const raw = fs.readFileSync(APPS_FILE, 'utf8').replace(/^\uFEFF/, '');
+  const data = JSON.parse(raw);
+  const list = Array.isArray(data) ? data : data?.apps;
+  if (!Array.isArray(list)) {
+    throw new Error('apps.json bir dizi veya { "apps": [...] } biçiminde olmalıdır.');
+  }
+  return list
+    .filter((item) => item && typeof item === 'object')
+    .map(normalizeApp)
+    .filter((app) => app.name);
+}
+
+function appToField(app) {
+  const version = app.version ? ` · v${app.version.replace(/^v/i, '')}` : '';
+  const lines = [
+    `**Boyut:** ${app.size || 'Belirtilmedi'}`,
+    app.description ? clip(app.description, 350) : '',
+    app.url ? `[⬇ İndirme Bağlantısı](${app.url.replace(/\)/g, '%29')})` : '*İndirme bağlantısı bulunamadı.*',
+  ].filter(Boolean);
+  return {
+    name: clip(`📦 ${app.name}${version}`, 256),
+    value: clip(lines.join('\n'), 1024),
+  };
+}
+
+/** Uygulamaları Discord limitlerine uygun şekilde embed sayfalarına böler. */
+function buildAppEmbeds(apps) {
+  const pages = [];
+  let current = [];
+  let size = 0;
+
+  for (const app of apps) {
+    const field = appToField(app);
+    const len = field.name.length + field.value.length;
+    if (current.length && (current.length >= 6 || size + len > 4500)) {
+      pages.push(current);
+      current = [];
+      size = 0;
+    }
+    current.push(field);
+    size += len;
+  }
+  if (current.length) pages.push(current);
+
+  return pages.map((fields, i) =>
+    makeEmbed({
+      heading: 'AiX UYGULAMA KATALOĞU',
+      description: i === 0
+        ? `Yayındaki uygulama ve oyunların güncel listesi. Toplam kayıt: **${apps.length}**`
+        : 'Katalog devamı.',
+      fields,
+      footer: `AETHERIX // AiX APK PORTAL • Sayfa ${i + 1}/${pages.length}`,
+    }),
+  );
+}
+
+async function handleAppsCommand(message) {
+  const now = Date.now();
+  if (now - (appsCooldown.get(message.author.id) ?? 0) < APPS_COOLDOWN_MS) {
+    return message.react('⏳').catch(() => {});
+  }
+  appsCooldown.set(message.author.id, now);
+
+  let embeds;
+  try {
+    const apps = loadApps();
+    if (!apps.length) {
+      return await message.reply({
+        embeds: [makeEmbed({ heading: 'KATALOG BOŞ', description: 'Şu anda yayında uygulama kaydı bulunmuyor.' })],
+      });
+    }
+    embeds = buildAppEmbeds(apps);
+  } catch (err) {
+    console.error('[APPS] apps.json okunamadı:', err.message);
+    const description =
+      err.code === 'ENOENT'
+        ? '`apps.json` veri dosyası bulunamadı. Lütfen yetkili ekibe bildirin.'
+        : 'Uygulama listesi okunurken bir hata oluştu. Lütfen yetkili ekibe bildirin.';
+    return message
+      .reply({ embeds: [makeEmbed({ heading: 'VERİ KAYNAĞINA ERİŞİLEMEDİ', description })] })
+      .catch(() => {});
+  }
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setLabel('Web Sitemize Git').setStyle(ButtonStyle.Link).setURL(WEBSITE_URL),
+  );
+
+  try {
+    for (let i = 0; i < embeds.length; i++) {
+      const payload = { embeds: [embeds[i]], ...(i === embeds.length - 1 ? { components: [row] } : {}) };
+      if (i === 0) await message.reply(payload);
+      else await message.channel.send(payload);
+    }
+  } catch (err) {
+    console.error('[APPS] Mesaj gönderilemedi:', err.message);
+  }
+}
+
 /* ───────────────────────────── CLIENT ───────────────────────────── */
 
 const client = new Client({
@@ -528,6 +802,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return reply('DOĞRULAMA MEVCUT', 'Hesabınız zaten doğrulanmıştır. Ek bir işlem gerekmemektedir.');
     }
 
+    // Önce yetki ver, sonra kısıtlı rolü kaldır (kullanıcı hiçbir anda rolsüz kalmaz)
     await member.roles.add(memberRole, 'AETHERIX SYSTEM ENGINE: doğrulama');
     if (member.roles.cache.has(unverifiedRole.id)) {
       await member.roles.remove(unverifiedRole, 'AETHERIX SYSTEM ENGINE: doğrulama');
@@ -548,12 +823,51 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
+/* ═══════════════ EK DİNLEYİCİLER (v2) — mevcut dinleyicilere dokunulmaz ═══════════════ */
+
+// Başlangıçta "📢 GİRİŞ - ÇIKIŞ" kategorisi ve #giriş-çıkış kanalını kontrol et / oluştur
+client.once(Events.ClientReady, async () => {
+  for (const guild of client.guilds.cache.values()) {
+    await prepareGuild(guild);
+  }
+});
+
+// Bot yeni bir sunucuya eklendiğinde de aynı hazırlık yapılır
+client.on(Events.GuildCreate, (guild) => {
+  prepareGuild(guild);
+});
+
+// Üye katıldı → yeşil/neon embed
+client.on(Events.GuildMemberAdd, async (member) => {
+  try {
+    await sendToLogChannel(member.guild, { embeds: [buildJoinEmbed(member)] });
+  } catch (err) {
+    console.error(`[GİRİŞ-ÇIKIŞ] Katılım bildirimi gönderilemedi (${member.guild.name}):`, err.message);
+  }
+});
+
+// Üye ayrıldı → kırmızı sade embed
+client.on(Events.GuildMemberRemove, async (member) => {
+  try {
+    await sendToLogChannel(member.guild, { embeds: [buildLeaveEmbed(member)] });
+  } catch (err) {
+    console.error(`[GİRİŞ-ÇIKIŞ] Ayrılma bildirimi gönderilemedi (${member.guild.name}):`, err.message);
+  }
+});
+
+// !uygulamalar / !apps
+client.on(Events.MessageCreate, async (message) => {
+  if (message.author.bot || !message.inGuild()) return;
+  const command = message.content.trim().split(/\s+/)[0].toLowerCase();
+  if (!APPS_COMMANDS.includes(command)) return;
+  await handleAppsCommand(message);
+});
+
 client.on(Events.Error, (err) => console.error('[CLIENT] Hata:', err));
 process.on('unhandledRejection', (err) => console.error('[UNHANDLED]', err));
 
 if (!TOKEN) {
-  console.error('DISCORD_TOKEN / TOKEN ortam değişkeni veya kod içinde token bulunamadı.');
+  console.error('DISCORD_TOKEN ortam değişkeni tanımlı değil. Örn: DISCORD_TOKEN=xxxxx node index.js');
   process.exit(1);
 }
-
 client.login(TOKEN);
